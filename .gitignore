@@ -3,5 +3,7 @@ node_modules
 .vercel
 
 .key-convert.js
+.env.local
 
 voyago-server-firebase-adminsdk-fbsvc-29ddd31702.json
+.env*

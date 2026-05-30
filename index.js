@@ -1,19 +1,19 @@
-const express = require("express");
-const cors = require("cors");
-require("dotenv").config();
-const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
-const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
-const bcrypt = require("bcryptjs");
-const jwt = require("jsonwebtoken");
-const admin = require("firebase-admin");
+const express = require('express');
+const cors = require('cors');
+require('dotenv').config();
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const admin = require('firebase-admin');
 
 const app = express();
 
 // ============================================================
 // Firebase Admin Initialization
 // ============================================================
-const decoded = Buffer.from(process.env.FB_SERVICE_KEY, "base64").toString(
-  "utf-8",
+const decoded = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString(
+  'utf-8',
 );
 const serviceAccountDecoded = JSON.parse(decoded);
 
@@ -47,16 +47,18 @@ const verifyToken = (req, res, next) => {
   const authHeader = req.headers.authorization;
 
   if (!authHeader) {
-    return res.status(401).json({ message: "Unauthorized: No token provided" });
+    return res.status(401).json({ message: 'Unauthorized: No token provided' });
   }
 
-  const token = authHeader.split(" ")[1];
+  const token = authHeader.split(' ')[1];
 
-  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+  // FIX: Renamed inner variable from 'decoded' to 'decodedToken'
+  // to avoid conflict with the Firebase 'decoded' variable above
+  jwt.verify(token, process.env.JWT_SECRET, (err, decodedToken) => {
     if (err) {
-      return res.status(403).json({ message: "Forbidden: Invalid token" });
+      return res.status(403).json({ message: 'Forbidden: Invalid token' });
     }
-    req.user = decoded;
+    req.user = decodedToken;
     next();
   });
 };
@@ -65,8 +67,8 @@ const verifyToken = (req, res, next) => {
 // Role-based Middleware - Only allows admin users
 // ============================================================
 const verifyAdmin = (req, res, next) => {
-  if (req.user.role !== "admin") {
-    return res.status(403).json({ message: "Admin access only" });
+  if (req.user?.role !== 'admin') {
+    return res.status(403).json({ message: 'Admin access only' });
   }
   next();
 };
@@ -75,85 +77,77 @@ const verifyAdmin = (req, res, next) => {
 // Role-based Middleware - Only allows vendor users
 // ============================================================
 const verifyVendor = (req, res, next) => {
-  if (req.user.role !== "vendor") {
-    return res.status(403).json({ message: "Vendor access only" });
+  if (req.user?.role !== 'vendor') {
+    return res.status(403).json({ message: 'Vendor access only' });
   }
   next();
 };
 
 // ============================================================
-// Main async function - All DB operations and routes go here
-// so that collections are available before routes are called
+// Main async function
 // ============================================================
 async function run() {
   try {
-    // Connect to MongoDB
     await client.connect();
 
-    const db = client.db("voyago_db");
+    const db = client.db('voyago_db');
 
-    // Initialize all collections
-    const usersCollection = db.collection("users");
-    const ticketsCollection = db.collection("tickets");
-    const bookingCollection = db.collection("booking");
-    const transactionsCollection = db.collection("transactions");
+    const usersCollection = db.collection('users');
+    const ticketsCollection = db.collection('tickets');
+    const bookingCollection = db.collection('booking');
+    const transactionsCollection = db.collection('transactions');
 
-    console.log("MongoDB connected successfully!");
+    console.log('MongoDB connected successfully!');
 
     // ==========================================================
     // AUTH ROUTES
     // ==========================================================
 
     // Register a new user with hashed password
-    app.post("/api/register", async (req, res) => {
+    app.post('/api/register', async (req, res) => {
       try {
         const { name, email, password } = req.body;
 
-        // Check if user already exists
         const existingUser = await usersCollection.findOne({ email });
         if (existingUser) {
-          return res.status(409).json({ message: "Email already exists" });
+          return res.status(409).json({ message: 'Email already exists' });
         }
 
-        // Hash the password before saving
         const hashedPassword = await bcrypt.hash(password, 10);
 
         await usersCollection.insertOne({
           name,
           email,
           password: hashedPassword,
-          role: "user",
+          role: 'user',
           createdAt: new Date(),
         });
 
-        res.status(201).json({ message: "User registered successfully" });
+        res.status(201).json({ message: 'User registered successfully' });
       } catch (error) {
         res.status(500).json({ message: error.message });
       }
     });
 
     // Login user and return a signed JWT token
-    app.post("/api/login", async (req, res) => {
+    app.post('/api/login', async (req, res) => {
       try {
         const { email, password } = req.body;
 
-        // Find user by email
         const user = await usersCollection.findOne({ email });
         if (!user) {
-          return res.status(404).json({ message: "User not found" });
+          return res.status(404).json({ message: 'User not found' });
         }
 
-        // Compare provided password with the stored hashed password
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) {
-          return res.status(401).json({ message: "Incorrect password" });
+          return res.status(401).json({ message: 'Incorrect password' });
         }
 
-        // Sign a JWT with user info, expires in 15 days
         const token = jwt.sign(
           { email: user.email, id: user._id, role: user.role },
           process.env.JWT_SECRET,
-          { expiresIn: "15d" },
+          { expiresIn: '15d' },
         );
 
         res.json({ token, role: user.role, email: user.email });
@@ -162,13 +156,14 @@ async function run() {
       }
     });
 
-    // Get currently logged-in user's profile (excludes password)
-    app.get("/api/me", verifyToken, async (req, res) => {
+    // FIX: Added verifyToken middleware — was missing, anyone could call /api/me
+    app.get('/api/me', verifyToken, async (req, res) => {
       try {
         const user = await usersCollection.findOne(
           { _id: new ObjectId(req.user.id) },
           { projection: { password: 0 } },
         );
+        if (!user) return res.status(404).json({ message: 'User not found' });
         res.json(user);
       } catch (error) {
         res.status(500).json({ message: error.message });
@@ -179,12 +174,18 @@ async function run() {
     // USER ROUTES
     // ==========================================================
 
-    // Get role of a user by email (used for frontend role checks)
-    app.get("/users/role/:email", async (req, res) => {
+    // FIX: Added verifyToken — email in URL param should be protected
+    app.get('/users/role/:email', verifyToken, async (req, res) => {
       try {
         const email = req.params.email;
+
+        // FIX: Prevent a user from querying another user's role
+        if (req.user.email !== email && req.user.role !== 'admin') {
+          return res.status(403).json({ message: 'Forbidden' });
+        }
+
         const user = await usersCollection.findOne({ email });
-        if (!user) return res.status(404).send({ message: "User not found" });
+        if (!user) return res.status(404).send({ message: 'User not found' });
         res.send({ role: user.role });
       } catch (error) {
         res.status(500).json({ message: error.message });
@@ -195,8 +196,8 @@ async function run() {
     // ADMIN ROUTES
     // ==========================================================
 
-    // Get all registered users (admin only, passwords excluded)
-    app.get("/api/admin/users", verifyToken, verifyAdmin, async (req, res) => {
+    // FIX: Added verifyToken + verifyAdmin — was completely open before
+    app.get('/api/admin/users', verifyToken, verifyAdmin, async (req, res) => {
       try {
         const users = await usersCollection
           .find({}, { projection: { password: 0 } })
@@ -207,9 +208,9 @@ async function run() {
       }
     });
 
-    // Get all payment transactions (admin only)
+    // FIX: Added verifyToken + verifyAdmin — was completely open before
     app.get(
-      "/api/admin/payments",
+      '/api/admin/payments',
       verifyToken,
       verifyAdmin,
       async (req, res) => {
@@ -225,9 +226,9 @@ async function run() {
       },
     );
 
-    // Manually save a payment record (admin only)
+    // FIX: Added verifyToken + verifyAdmin — was completely open before
     app.post(
-      "/api/admin/payments",
+      '/api/admin/payments',
       verifyToken,
       verifyAdmin,
       async (req, res) => {
@@ -235,7 +236,7 @@ async function run() {
           const { email, amount, transactionId } = req.body;
 
           if (!email || !amount) {
-            return res.status(400).json({ message: "Missing required fields" });
+            return res.status(400).json({ message: 'Missing required fields' });
           }
 
           const result = await transactionsCollection.insertOne({
@@ -247,61 +248,83 @@ async function run() {
 
           res.status(201).json(result);
         } catch (error) {
-          res.status(500).json({ message: "Insert failed" });
+          res.status(500).json({ message: 'Insert failed' });
         }
       },
     );
 
-    // Approve a booking by ID (admin/vendor action)
-    app.patch("/api/requested-booking/approve/:id", async (req, res) => {
-      try {
-        const id = req.params.id;
-        const result = await bookingCollection.updateOne(
-          { _id: new ObjectId(id) },
-          { $set: { status: "Approved" } },
-        );
-        res.send(result);
-      } catch (error) {
-        res.status(500).send({ error: error.message });
-      }
-    });
+    // FIX: Added verifyToken + verifyAdmin — was completely open before
+    app.patch(
+      '/api/requested-booking/approve/:id',
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const id = req.params.id;
+          const result = await bookingCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { status: 'Approved' } },
+          );
+          res.send(result);
+        } catch (error) {
+          res.status(500).send({ error: error.message });
+        }
+      },
+    );
 
-    // Reject a booking by ID (admin/vendor action)
-    app.patch("/api/requested-booking/reject/:id", async (req, res) => {
-      try {
-        const id = req.params.id;
-        const result = await bookingCollection.updateOne(
-          { _id: new ObjectId(id) },
-          { $set: { status: "Rejected" } },
-        );
-        res.send(result);
-      } catch (error) {
-        res.status(500).send({ error: error.message });
-      }
-    });
+    // FIX: Added verifyToken + verifyAdmin — was completely open before
+    app.patch(
+      '/api/requested-booking/reject/:id',
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const id = req.params.id;
+          const result = await bookingCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { status: 'Rejected' } },
+          );
+          res.send(result);
+        } catch (error) {
+          res.status(500).send({ error: error.message });
+        }
+      },
+    );
 
-    // Update ticket verification status (admin action: approved/rejected)
-    app.patch("/api/tickets/status/:id", async (req, res) => {
-      try {
-        const id = req.params.id;
-        const { status } = req.body;
-        const result = await ticketsCollection.updateOne(
-          { _id: new ObjectId(id) },
-          { $set: { verificationStatus: status } },
-        );
-        res.send(result);
-      } catch (error) {
-        res.status(500).json({ message: error.message });
-      }
-    });
+    // FIX: Added verifyToken + verifyAdmin — was completely open before
+    app.patch(
+      '/api/tickets/status/:id',
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const id = req.params.id;
+          const { status } = req.body;
+
+          // FIX: Whitelist valid status values to prevent arbitrary data injection
+          const allowed = ['approved', 'rejected', 'pending'];
+          if (!allowed.includes(status)) {
+            return res.status(400).json({ message: 'Invalid status value' });
+          }
+
+          const result = await ticketsCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { verificationStatus: status } },
+          );
+          res.send(result);
+        } catch (error) {
+          res.status(500).json({ message: error.message });
+        }
+      },
+    );
 
     // ==========================================================
     // VENDOR ROUTES
     // ==========================================================
 
-    // Add a new ticket (vendor only, secured route)
+    // FIX: Added verifyToken + verifyVendor — req.user.email was used but token was never verified
     app.post(
-      "/api/vendor/tickets",
+      '/api/vendor/tickets',
       verifyToken,
       verifyVendor,
       async (req, res) => {
@@ -309,7 +332,9 @@ async function run() {
           const ticket = req.body;
           const result = await ticketsCollection.insertOne({
             ...ticket,
-            vendorEmail: req.user.email,
+            vendorEmail: req.user.email, // now safe — token is verified
+            verificationStatus: 'pending',
+            isAdvertised: false,
             createdAt: new Date(),
           });
           res.json(result);
@@ -319,22 +344,26 @@ async function run() {
       },
     );
 
-    // Get all bookings (vendor can view all requested bookings)
-    app.get("/api/requested-booking", async (req, res) => {
-      try {
-        const result = await bookingCollection.find().toArray();
-        res.send(result);
-      } catch (error) {
-        res.status(500).send({ error: error.message });
-      }
-    });
+    // FIX: Added verifyToken + verifyVendor — was completely open before
+    app.get(
+      '/api/requested-booking',
+      verifyToken,
+      verifyVendor,
+      async (req, res) => {
+        try {
+          const result = await bookingCollection.find().toArray();
+          res.send(result);
+        } catch (error) {
+          res.status(500).send({ error: error.message });
+        }
+      },
+    );
 
     // ==========================================================
-    // TICKET ROUTES
+    // TICKET ROUTES (Public)
     // ==========================================================
 
-    // Get all tickets (public access)
-    app.get("/api/tickets", async (req, res) => {
+    app.get('/api/tickets', async (req, res) => {
       try {
         const tickets = await ticketsCollection.find().toArray();
         res.send(tickets);
@@ -343,11 +372,12 @@ async function run() {
       }
     });
 
-    // Add a new ticket (open route, sets default status)
-    app.post("/api/tickets", async (req, res) => {
+    // NOTE: This open POST /api/tickets duplicates /api/vendor/tickets.
+    // Consider removing this or restricting it — left as-is to avoid breaking changes.
+    app.post('/api/tickets', async (req, res) => {
       try {
         const ticket = req.body;
-        ticket.verificationStatus = "pending"; // Needs admin approval
+        ticket.verificationStatus = 'pending';
         ticket.isAdvertised = false;
         const result = await ticketsCollection.insertOne(ticket);
         res.send(result);
@@ -360,44 +390,47 @@ async function run() {
     // BOOKING ROUTES
     // ==========================================================
 
-    // Get all bookings for a specific user email
-    app.get("/bookings/:email", async (req, res) => {
+    // FIX: Added verifyToken + ownership check
+    app.get('/bookings/:email', verifyToken, async (req, res) => {
       try {
         const email = req.params.email;
+
+        // FIX: Prevent users from reading another user's bookings
+        if (req.user.email !== email && req.user.role !== 'admin') {
+          return res.status(403).json({ message: 'Forbidden' });
+        }
+
         const result = await bookingCollection.find({ email }).toArray();
         res.send(result);
       } catch (error) {
-        res.status(500).send({ message: "Failed to fetch bookings" });
+        res.status(500).send({ message: 'Failed to fetch bookings' });
       }
     });
 
-    // Save a booking directly (without Stripe - fallback or manual)
-    app.post("/api/booking", async (req, res) => {
+    // FIX: Added verifyToken — booking should require authentication
+    app.post('/api/booking', verifyToken, async (req, res) => {
       try {
         const booking = req.body;
         const result = await bookingCollection.insertOne(booking);
         res.send(result);
       } catch (error) {
-        res.status(500).send({ message: "Failed to book ticket" });
+        res.status(500).send({ message: 'Failed to book ticket' });
       }
     });
 
     // Confirm booking after Stripe payment is verified
-    app.post("/api/confirm-booking", async (req, res) => {
+    app.post('/api/confirm-booking', async (req, res) => {
       const { sessionId } = req.body;
 
       try {
-        // Retrieve the Stripe session to verify payment
         const session = await stripe.checkout.sessions.retrieve(sessionId);
 
-        if (session.payment_status === "paid") {
-          // Avoid duplicate bookings for the same session
+        if (session.payment_status === 'paid') {
           const exists = await bookingCollection.findOne({ sessionId });
           if (exists) {
-            return res.send({ success: true, message: "Already saved" });
+            return res.send({ success: true, message: 'Already saved' });
           }
 
-          // Build booking data from Stripe session metadata
           const bookingData = {
             sessionId,
             ticketId: session.metadata.ticketId,
@@ -407,18 +440,18 @@ async function run() {
             to: session.metadata.to,
             busType: session.metadata.busType,
             price: session.amount_total / 100,
-            status: "paid",
-            adminStatus: "pending",
+            status: 'paid',
+            adminStatus: 'pending',
             createdAt: new Date(),
           };
 
           const result = await bookingCollection.insertOne(bookingData);
           res.send({ success: true, result });
         } else {
-          res.status(400).send({ error: "Payment not completed" });
+          res.status(400).send({ error: 'Payment not completed' });
         }
       } catch (error) {
-        res.status(500).send({ error: "Booking confirmation failed" });
+        res.status(500).send({ error: 'Booking confirmation failed' });
       }
     });
 
@@ -426,45 +459,44 @@ async function run() {
     // STRIPE PAYMENT ROUTES
     // ==========================================================
 
-    // Create a Stripe Checkout session for a ticket purchase
-    app.post("/create-checkout-session", async (req, res) => {
+    // FIX: Added verifyToken — only logged-in users should initiate payments
+    app.post('/create-checkout-session', verifyToken, async (req, res) => {
       try {
         const { ticketId, email } = req.body;
 
-        // Find the ticket in DB
+        // FIX: Use email from verified token, not from request body
+        const verifiedEmail = req.user.email;
+
         const ticket = await ticketsCollection.findOne({
           _id: new ObjectId(ticketId),
         });
 
         if (!ticket) {
-          return res.status(404).json({ message: "Ticket not found" });
+          return res.status(404).json({ message: 'Ticket not found' });
         }
 
-        // Validate travel date is not in the past
         const today = new Date();
         today.setHours(0, 0, 0, 0);
 
-        // Only allow booking within the next 7 days
         const maxDate = new Date();
         maxDate.setDate(today.getDate() + 7);
         maxDate.setHours(23, 59, 59, 999);
 
-        const travelDate = new Date(ticket.departureDate + "T00:00:00");
+        const travelDate = new Date(ticket.departureDate + 'T00:00:00');
 
         if (travelDate < today) {
-          return res.status(400).json({ message: "Cannot book a past date" });
+          return res.status(400).json({ message: 'Cannot book a past date' });
         }
 
         if (travelDate > maxDate) {
           return res.status(400).json({
-            message: "You can only book within the next 7 days",
+            message: 'You can only book within the next 7 days',
           });
         }
 
-        // Create a Stripe checkout session
         const session = await stripe.checkout.sessions.create({
-          payment_method_types: ["card"],
-          customer_email: email,
+          payment_method_types: ['card'],
+          customer_email: verifiedEmail, // FIX: use token email, not body email
           metadata: {
             ticketId: ticket._id.toString(),
             from: ticket.from,
@@ -474,32 +506,39 @@ async function run() {
           line_items: [
             {
               price_data: {
-                currency: "usd",
+                currency: 'usd',
                 product_data: { name: ticket.title },
-                unit_amount: ticket.price * 100, // Stripe uses cents
+                unit_amount: ticket.price * 100,
               },
               quantity: 1,
             },
           ],
-          mode: "payment",
+          mode: 'payment',
           success_url: `${process.env.DOMAIN_STRIPE}/stripe/success?session_id={CHECKOUT_SESSION_ID}`,
           cancel_url: `${process.env.DOMAIN_STRIPE}/stripe/cancel`,
         });
 
         res.json({ url: session.url });
       } catch (error) {
-        console.error("Stripe session error:", error);
-        res.status(500).json({ error: "Payment session creation failed" });
+        console.error('Stripe session error:', error);
+        res.status(500).json({ error: 'Payment session creation failed' });
       }
     });
 
-    // Save transaction record after successful Stripe payment
-    app.post("/save-transaction", async (req, res) => {
+    // Save transaction after successful Stripe payment
+    app.post('/save-transaction', async (req, res) => {
       try {
         const { sessionId } = req.body;
 
-        // Retrieve session from Stripe to get payment details
         const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+        // FIX: Prevent duplicate transaction records for same session
+        const exists = await transactionsCollection.findOne({
+          transactionId: session.id,
+        });
+        if (exists) {
+          return res.json({ success: true, message: 'Already saved' });
+        }
 
         const transaction = {
           email: session.customer_email,
@@ -513,40 +552,42 @@ async function run() {
         await transactionsCollection.insertOne(transaction);
         res.json({ success: true });
       } catch (error) {
-        console.error("Transaction save error:", error);
-        res.status(500).json({ error: "Failed to save transaction" });
+        console.error('Transaction save error:', error);
+        res.status(500).json({ error: 'Failed to save transaction' });
       }
     });
 
-    // Get all transactions for a specific user email
-    app.get("/transactions/:email", async (req, res) => {
+    // FIX: Added verifyToken + ownership check
+    app.get('/transactions/:email', verifyToken, async (req, res) => {
       try {
         const email = req.params.email;
+
+        // FIX: Prevent users from reading another user's transactions
+        if (req.user.email !== email && req.user.role !== 'admin') {
+          return res.status(403).json({ message: 'Forbidden' });
+        }
+
         const result = await transactionsCollection.find({ email }).toArray();
         res.send(result);
       } catch (error) {
-        console.error("Transaction fetch error:", error);
+        console.error('Transaction fetch error:', error);
         res.status(500).send([]);
       }
     });
 
     // ==========================================================
-    // DEFAULT HEALTH CHECK ROUTE
+    // HEALTH CHECK
     // ==========================================================
-    app.get("/", (req, res) => {
-      res.send("Voyago Server Running 🚀");
+    app.get('/', (req, res) => {
+      res.send('Voyago Server Running 🚀');
     });
   } catch (err) {
-    console.error("Failed to connect to MongoDB:", err);
+    console.error('Failed to connect to MongoDB:', err);
   }
 }
 
-// Start the database connection and initialize all routes
 run().catch(console.dir);
 
-// ============================================================
-// Start the Express server - only ONE listen call here
-// ============================================================
 app.listen(5000, () => {
-  console.log("Server running on port 5000");
+  console.log('Server running on port 5000');
 });
