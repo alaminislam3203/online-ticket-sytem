@@ -372,6 +372,20 @@ async function run() {
       }
     });
 
+    app.get('/api/tickets/:id', async (req, res) => {
+      try {
+        const ticket = await ticketsCollection.findOne({
+          _id: new ObjectId(req.params.id),
+        });
+        if (!ticket) {
+          return res.status(404).json({ message: 'Ticket not found' });
+        }
+        res.json(ticket);
+      } catch (error) {
+        res.status(500).json({ message: error.message });
+      }
+    });
+
     // NOTE: This open POST /api/tickets duplicates /api/vendor/tickets.
     // Consider removing this or restricting it — left as-is to avoid breaking changes.
     app.post('/api/tickets', async (req, res) => {
