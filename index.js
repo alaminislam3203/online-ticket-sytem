@@ -17,7 +17,15 @@ admin.initializeApp({
   credential: admin.credential.cert(serviceAccountDecoded),
 });
 
-app.use(cors());
+app.use(
+  cors({
+    origin: [
+      'http://localhost:5173',
+      'http://localhost:5000', // ← তোমার actual Vercel URL
+    ],
+    credentials: true,
+  }),
+);
 app.use(express.json());
 
 const uri = `mongodb+srv://voyago_db_user2:${process.env.DB_PASS}@cluster0.pbml03e.mongodb.net/?appName=Cluster0`;
@@ -747,7 +755,7 @@ async function run() {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         const maxDate = new Date();
-        maxDate.setDate(today.getDate() + 7);
+        maxDate.setDate(today.getDate() + 15);
         maxDate.setHours(23, 59, 59, 999);
         const travelDate = new Date(ticket.departureDate + 'T00:00:00');
         if (travelDate < today)
@@ -755,7 +763,7 @@ async function run() {
         if (travelDate > maxDate)
           return res
             .status(400)
-            .json({ message: 'You can only book within the next 7 days' });
+            .json({ message: 'You can only book within the next 15 days' });
         const session = await stripe.checkout.sessions.create({
           payment_method_types: ['card'],
           customer_email: req.user.email,
