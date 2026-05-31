@@ -21,7 +21,7 @@ app.use(
   cors({
     origin: (origin, callback) => {
       const allowed = ['http://localhost:5173'];
-      // Vercel সব URL allow করবে
+
       if (
         !origin ||
         allowed.includes(origin) ||
@@ -721,6 +721,11 @@ async function run() {
           if (exists)
             return res.send({ success: true, message: 'Already saved' });
           const quantity = parseInt(session.metadata.quantity) || 1;
+
+          const ticketData = await ticketsCollection.findOne({
+            _id: new ObjectId(session.metadata.ticketId),
+          });
+
           const result = await bookingCollection.insertOne({
             sessionId,
             ticketId: session.metadata.ticketId,
@@ -729,6 +734,9 @@ async function run() {
             from: session.metadata.from,
             to: session.metadata.to,
             busType: session.metadata.busType,
+            title: session.metadata.title, // ← title
+            departureDate: ticketData?.departureDate || null, // ← date
+            departureTime: ticketData?.departureTime || null, // ← time
             quantity,
             price: session.amount_total / 100,
             status: 'paid',
@@ -866,6 +874,11 @@ async function run() {
 }
 
 run().catch(console.dir);
-app.listen(5000, () => {
-  console.log('Server running on port 5000');
-});
+
+if (process.env.NODE_ENV !== 'production') {
+  app.listen(5000, () => {
+    console.log('Server running on port 5000');
+  });
+}
+
+module.exports = app;
