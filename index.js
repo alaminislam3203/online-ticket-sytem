@@ -19,10 +19,19 @@ admin.initializeApp({
 
 app.use(
   cors({
-    origin: [
-      'http://localhost:5173',
-      'http://localhost:5000', // ← তোমার actual Vercel URL
-    ],
+    origin: (origin, callback) => {
+      const allowed = ['http://localhost:5173'];
+      // Vercel সব URL allow করবে
+      if (
+        !origin ||
+        allowed.includes(origin) ||
+        origin.endsWith('.vercel.app')
+      ) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
     credentials: true,
   }),
 );
@@ -726,10 +735,27 @@ async function run() {
             adminStatus: 'pending',
             createdAt: new Date(),
           });
+
           await ticketsCollection.updateOne(
             { _id: new ObjectId(session.metadata.ticketId) },
             { $inc: { quantity: -quantity } },
           );
+
+          // ← এটা add করো — transaction automatically save হবে
+          const alreadyTransaction = await transactionsCollection.findOne({
+            transactionId: session.id,
+          });
+          if (!alreadyTransaction) {
+            await transactionsCollection.insertOne({
+              email: session.customer_email,
+              title: session.metadata?.title,
+              ticketId: session.metadata?.ticketId,
+              amount: session.amount_total / 100,
+              transactionId: session.id,
+              date: new Date(),
+            });
+          }
+
           res.send({ success: true, result });
         } else {
           res.status(400).send({ error: 'Payment not completed' });
