@@ -76,6 +76,7 @@ async function run() {
           name,
           email,
           password: hashedPassword,
+          photoURL: req.body.photoURL || '',
           role: 'user',
           createdAt: new Date(),
         });
