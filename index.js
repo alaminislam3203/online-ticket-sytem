@@ -872,7 +872,6 @@ async function run() {
     console.error('Failed to connect to MongoDB:', err);
   }
 }
-
 run().catch(console.dir);
 
 if (process.env.NODE_ENV !== 'production') {
