@@ -1,6 +1,6 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-require('dotenv').config();
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const bcrypt = require('bcryptjs');
@@ -19,19 +19,7 @@ admin.initializeApp({
 
 app.use(
   cors({
-    origin: (origin, callback) => {
-      const allowed = ['http://localhost:5173'];
-
-      if (
-        !origin ||
-        allowed.includes(origin) ||
-        origin.endsWith('.vercel.app')
-      ) {
-        callback(null, true);
-      } else {
-        callback(new Error('Not allowed by CORS'));
-      }
-    },
+    origin: '*',
     credentials: true,
   }),
 );
@@ -73,7 +61,6 @@ const verifyVendor = (req, res, next) => {
 
 async function run() {
   try {
-    await client.connect();
     const db = client.db('voyago_db');
     const usersCollection = db.collection('users');
     const ticketsCollection = db.collection('tickets');
@@ -84,19 +71,24 @@ async function run() {
     // AUTH
     app.post('/api/register', async (req, res) => {
       try {
-        const { name, email, password } = req.body;
+        const { name, email, password, photoURL, role } = req.body;
         const existingUser = await usersCollection.findOne({ email });
         if (existingUser)
           return res.status(409).json({ message: 'Email already exists' });
-        const hashedPassword = await bcrypt.hash(password, 10);
-        await usersCollection.insertOne({
-          name,
+
+        const userData = {
+          name: name || '',
           email,
-          password: hashedPassword,
-          photoURL: req.body.photoURL || '',
+          photoURL: photoURL || '',
           role: 'user',
           createdAt: new Date(),
-        });
+        };
+
+        if (password) {
+          userData.password = await bcrypt.hash(password, 10);
+        }
+
+        await usersCollection.insertOne(userData);
         res.status(201).json({ message: 'User registered successfully' });
       } catch (error) {
         res.status(500).json({ message: error.message });
@@ -874,10 +866,6 @@ async function run() {
 }
 run().catch(console.dir);
 
-if (process.env.NODE_ENV !== 'production') {
-  app.listen(5000, () => {
-    console.log('Server running on port 5000');
-  });
-}
-
-module.exports = app;
+app.listen(process.env.PORT, () => {
+  console.log(`Server running on port, ${process.env.PORT}`);
+});
