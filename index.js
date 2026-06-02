@@ -576,7 +576,6 @@ async function run() {
       verifyVendor,
       async (req, res) => {
         try {
-          // ১. এই vendor-এর সব ticket আনো
           const vendorTickets = await ticketsCollection
             .find({ vendorEmail: req.user.email }, { projection: { _id: 1 } })
             .toArray();
@@ -709,6 +708,25 @@ async function run() {
     });
 
     // BOOKINGS
+
+    app.get('/api/booking', verifyToken, verifyVendor, async (req, res) => {
+      try {
+        const vendorTickets = await ticketsCollection
+          .find({ vendorEmail: req.user.email }, { projection: { _id: 1 } })
+          .toArray();
+        const ticketIds = vendorTickets.map(t => t._id.toString());
+
+        const bookings = await bookingCollection
+          .find({ ticketId: { $in: ticketIds }, status: 'paid' })
+          .sort({ createdAt: -1 })
+          .toArray();
+
+        res.json(bookings);
+      } catch (error) {
+        res.status(500).json({ message: error.message });
+      }
+    });
+
     app.get('/bookings/:email', verifyToken, async (req, res) => {
       try {
         const email = req.params.email;
