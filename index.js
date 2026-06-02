@@ -68,6 +68,15 @@ async function run() {
     const transactionsCollection = db.collection('transactions');
     console.log('MongoDB connected successfully!');
 
+    await bookingCollection.createIndex(
+      { sessionId: 1 },
+      { unique: true, sparse: true },
+    );
+    await transactionsCollection.createIndex(
+      { transactionId: 1 },
+      { unique: true },
+    );
+
     // AUTH
     app.post('/api/register', async (req, res) => {
       try {
@@ -705,7 +714,29 @@ async function run() {
         const email = req.params.email;
         if (req.user.email !== email && req.user.role !== 'admin')
           return res.status(403).json({ message: 'Forbidden' });
-        const result = await bookingCollection.find({ email }).toArray();
+
+        const allBookings = await bookingCollection.find({ email }).toArray();
+
+        const groupMap = new Map();
+
+        for (const booking of allBookings) {
+          const key = `${booking.ticketId}_${booking.departureDate}_${booking.departureTime}_${booking.quantity}`;
+          const status = booking.status?.toLowerCase();
+
+          if (!groupMap.has(key)) {
+            groupMap.set(key, booking);
+          } else {
+            const existing = groupMap.get(key);
+            const existingStatus = existing.status?.toLowerCase();
+
+            if (status === 'paid') {
+              groupMap.set(key, booking);
+            } else if (existingStatus !== 'paid' && status === 'approved') {
+            }
+          }
+        }
+
+        const result = Array.from(groupMap.values());
         res.send(result);
       } catch (error) {
         res.status(500).send({ message: 'Failed to fetch bookings' });
@@ -748,54 +779,63 @@ async function run() {
       try {
         const session = await stripe.checkout.sessions.retrieve(sessionId);
         if (session.payment_status === 'paid') {
+          // Already saved check
           const exists = await bookingCollection.findOne({ sessionId });
           if (exists)
             return res.send({ success: true, message: 'Already saved' });
-          const quantity = parseInt(session.metadata.quantity) || 1;
 
+          const quantity = parseInt(session.metadata.quantity) || 1;
           const ticketData = await ticketsCollection.findOne({
             _id: new ObjectId(session.metadata.ticketId),
           });
 
-          const result = await bookingCollection.insertOne({
-            sessionId,
-            ticketId: session.metadata.ticketId,
-            customerName: session.customer_email,
-            email: session.customer_email,
-            from: session.metadata.from,
-            to: session.metadata.to,
-            busType: session.metadata.busType,
-            title: session.metadata.title, // ← title
-            departureDate: ticketData?.departureDate || null, // ← date
-            departureTime: ticketData?.departureTime || null, // ← time
-            quantity,
-            price: session.amount_total / 100,
-            status: 'paid',
-            adminStatus: 'pending',
-            createdAt: new Date(),
-          });
-
-          await ticketsCollection.updateOne(
-            { _id: new ObjectId(session.metadata.ticketId) },
-            { $inc: { quantity: -quantity } },
-          );
-
-          // ← এটা add করো — transaction automatically save হবে
-          const alreadyTransaction = await transactionsCollection.findOne({
-            transactionId: session.id,
-          });
-          if (!alreadyTransaction) {
-            await transactionsCollection.insertOne({
+          try {
+            const result = await bookingCollection.insertOne({
+              sessionId,
+              ticketId: session.metadata.ticketId,
+              customerName: session.customer_email,
               email: session.customer_email,
-              title: session.metadata?.title,
-              ticketId: session.metadata?.ticketId,
-              amount: session.amount_total / 100,
-              transactionId: session.id,
-              date: new Date(),
+              from: session.metadata.from,
+              to: session.metadata.to,
+              busType: session.metadata.busType,
+              title: session.metadata.title,
+              departureDate: ticketData?.departureDate || null,
+              departureTime: ticketData?.departureTime || null,
+              quantity,
+              price: session.amount_total / 100,
+              status: 'paid',
+              adminStatus: 'pending',
+              createdAt: new Date(),
             });
-          }
 
-          res.send({ success: true, result });
+            await ticketsCollection.updateOne(
+              { _id: new ObjectId(session.metadata.ticketId) },
+              { $inc: { quantity: -quantity } },
+            );
+
+            // Transaction save
+            try {
+              await transactionsCollection.insertOne({
+                email: session.customer_email,
+                title: session.metadata?.title,
+                ticketId: session.metadata?.ticketId,
+                amount: session.amount_total / 100,
+                transactionId: session.id,
+                date: new Date(),
+              });
+            } catch (txErr) {
+              // Duplicate transaction — ignore
+              if (txErr.code !== 11000) throw txErr;
+            }
+
+            res.send({ success: true, result });
+          } catch (insertErr) {
+            // Duplicate booking — race condition থেকে বাঁচায়
+            if (insertErr.code === 11000) {
+              return res.send({ success: true, message: 'Already saved' });
+            }
+            throw insertErr;
+          }
         } else {
           res.status(400).send({ error: 'Payment not completed' });
         }
@@ -807,7 +847,7 @@ async function run() {
     // STRIPE
     app.post('/create-checkout-session', verifyToken, async (req, res) => {
       try {
-        const { ticketId, quantity = 1 } = req.body;
+        const { ticketId, quantity = 1, bookingId } = req.body;
         const ticket = await ticketsCollection.findOne({
           _id: new ObjectId(ticketId),
         });
@@ -854,6 +894,16 @@ async function run() {
           success_url: `${process.env.DOMAIN_STRIPE}/stripe/success?session_id={CHECKOUT_SESSION_ID}`,
           cancel_url: `${process.env.DOMAIN_STRIPE}/stripe/cancel`,
         });
+
+        if (bookingId) {
+          try {
+            await bookingCollection.deleteOne({
+              _id: new ObjectId(bookingId),
+              email: req.user.email,
+            });
+          } catch (_) {}
+        }
+
         res.json({ url: session.url });
       } catch (error) {
         res.status(500).json({ error: 'Payment session creation failed' });
