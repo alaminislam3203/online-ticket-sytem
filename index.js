@@ -363,6 +363,22 @@ async function run() {
         }
       },
     );
+    app.get(
+      '/api/admin/all-tickets',
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const tickets = await ticketsCollection
+            .find({})
+            .sort({ createdAt: -1 })
+            .toArray();
+          res.json(tickets);
+        } catch (error) {
+          res.status(500).json({ message: error.message });
+        }
+      },
+    );
 
     // VENDOR
     app.post(
@@ -551,19 +567,42 @@ async function run() {
       verifyVendor,
       async (req, res) => {
         try {
+          // ১. এই vendor-এর সব ticket আনো
           const vendorTickets = await ticketsCollection
             .find({ vendorEmail: req.user.email }, { projection: { _id: 1 } })
             .toArray();
+
           const ticketIds = vendorTickets.map(t => t._id.toString());
+
+          if (ticketIds.length === 0) {
+            return res.json({
+              totalRevenue: 0,
+              totalTicketsSold: 0,
+              totalTicketsAdded: 0,
+            });
+          }
+
+          // ২. paid booking খোঁজো — status 'paid' বা 'Paid' দুইটাই
           const paidBookings = await bookingCollection
-            .find({ ticketId: { $in: ticketIds }, status: 'paid' })
+            .find({
+              ticketId: { $in: ticketIds },
+              status: { $in: ['paid', 'Paid'] },
+            })
             .toArray();
+
+          // ৩. calculate
+          const totalRevenue = paidBookings.reduce(
+            (sum, b) => sum + (b.price || 0),
+            0,
+          );
+          const totalTicketsSold = paidBookings.reduce(
+            (sum, b) => sum + (b.quantity || 1),
+            0,
+          );
+
           res.json({
-            totalRevenue: paidBookings.reduce((s, b) => s + (b.price || 0), 0),
-            totalTicketsSold: paidBookings.reduce(
-              (s, b) => s + (b.quantity || 1),
-              0,
-            ),
+            totalRevenue,
+            totalTicketsSold,
             totalTicketsAdded: vendorTickets.length,
           });
         } catch (error) {
